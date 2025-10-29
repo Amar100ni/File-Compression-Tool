@@ -1,0 +1,96 @@
+cmake_minimum_required(VERSION 3.16)
+
+project(FileCompressionTool VERSION 1.0 LANGUAGES CXX)
+
+# ---------------------------
+# C++ Standard
+# ---------------------------
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
+# ---------------------------
+# Qt Setup
+# ---------------------------
+find_package(Qt6 REQUIRED COMPONENTS Widgets)
+
+set(CMAKE_AUTOMOC ON)
+set(CMAKE_AUTOUIC ON)
+set(CMAKE_AUTORCC OFF)
+
+# ---------------------------
+# Directory Variables
+# ---------------------------
+set(SRC_ROOT ${CMAKE_CURRENT_SOURCE_DIR}/src)
+set(GUI_ROOT ${CMAKE_CURRENT_SOURCE_DIR}/gui)
+set(INCLUDE_ROOT ${CMAKE_CURRENT_SOURCE_DIR}/include)
+
+# ---------------------------
+# File Lists
+# ---------------------------
+set(SOURCES
+    ${SRC_ROOT}/RLE.cpp
+    ${SRC_ROOT}/Huffman.cpp
+    ${SRC_ROOT}/BackendInterface.cpp
+    ${SRC_ROOT}/Logger.cpp
+    ${SRC_ROOT}/ReportGenerator.cpp
+    ${SRC_ROOT}/Utils.cpp
+    ${GUI_ROOT}/mainwindow.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/main.cpp
+)
+
+set(HEADERS
+    ${INCLUDE_ROOT}/RLE.h
+    ${INCLUDE_ROOT}/Huffman.h
+    ${INCLUDE_ROOT}/BackendInterface.h
+    ${INCLUDE_ROOT}/Logger.h
+    ${INCLUDE_ROOT}/ReportGenerator.h
+    ${INCLUDE_ROOT}/Utils.h
+    ${GUI_ROOT}/mainwindow.h
+)
+
+set(UI_FILES
+    ${GUI_ROOT}/mainwindow.ui
+)
+
+# ---------------------------
+# Target Definition
+# ---------------------------
+qt_add_executable(${PROJECT_NAME}
+    ${SOURCES}
+    ${HEADERS}
+    ${UI_FILES}
+)
+
+# ---------------------------
+# Include Directories (must come after target)
+# ---------------------------
+target_include_directories(${PROJECT_NAME}
+    PRIVATE
+        ${INCLUDE_ROOT}
+        ${SRC_ROOT}
+        ${GUI_ROOT}
+)
+
+# ---------------------------
+# Link Libraries
+# ---------------------------
+target_link_libraries(${PROJECT_NAME}
+    PRIVATE
+        Qt6::Widgets
+)
+
+# ---------------------------
+# Output Directory
+# ---------------------------
+set_target_properties(${PROJECT_NAME} PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin
+)
+
+# ---------------------------
+# Debug Info
+# ---------------------------
+message(STATUS "✅ Project: ${PROJECT_NAME}")
+message(STATUS "📁 Sources: ${SOURCES}")
+message(STATUS "📄 UI files: ${UI_FILES}")
+message(STATUS "⚙️  To build: cmake -S . -B build && cmake --build build --config Release")

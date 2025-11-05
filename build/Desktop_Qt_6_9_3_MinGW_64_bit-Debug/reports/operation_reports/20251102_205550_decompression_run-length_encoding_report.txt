@@ -1,0 +1,22 @@
+FILE COMPRESSION TOOL - OPERATION REPORT
+=========================================
+
+Operation Details:
+------------------
+Operation Type: Decompression
+Algorithm: Run-Length Encoding
+Timestamp: 2025-11-02 20:55:50
+Status: SUCCESS
+
+File Details:
+-------------
+Input File Size: 12.84 KB (13153 bytes)
+Output File Size: 7.76 KB (7947 bytes)
+Compression Ratio: 165.51%
+Execution Time: 0 ms
+
+Technical Information:
+---------------------
+Space Saved: -65.51%
+
+End of Report

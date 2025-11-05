@@ -1,20 +1,19 @@
-#ifndef REPORT_GENERATOR_H
-#define REPORT_GENERATOR_H
+#ifndef REPORTGENERATOR_H
+#define REPORTGENERATOR_H
 
-#include <string>
+#include <QString>
+#include "CompressionManager.h"
 
-namespace ReportGenerator {
-
-    // Generates a detailed compression/decompression report
-    void generateReport(const std::string& reportPath,
-                        const std::string& operation,
-                        const std::string& algorithm,
-                        const std::string& inputPath,
-                        const std::string& outputPath,
-                        bool success,
-                        double ratio,
-                        double timeTaken);
-
-}
+class ReportGenerator {
+public:
+    static void generateReport(const CompressionResult& result);
+    static QString getReportsDirectory();
+    static QString getLastReportPath();
+    
+private:
+    static void ensureReportsDirectoryExists();
+    static QString generateReportContent(const CompressionResult& result);
+    static QString lastReportPath;
+};
 
 #endif

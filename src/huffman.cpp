@@ -1,142 +1,305 @@
 #include "Huffman.h"
-#include <fstream>
-#include <queue>
-#include <unordered_map>
-#include <vector>
-#include <bitset>
-#include <string>
+#include "Utility.h"
+#include <QFile>
+#include <QDataStream>
+#include <QDebug>
+#include <QQueue>
+#include <QVector>
+#include <QElapsedTimer>
+#include <algorithm>
 
-struct Node {
-    char ch;
-    int freq;
-    Node *left, *right;
-
-    Node(char character, int frequency) {
-        ch = character;
-        freq = frequency;
-        left = right = nullptr;
-    }
-};
-
-struct Compare {
-    bool operator()(Node* l, Node* r) {
-        return l->freq > r->freq;
-    }
-};
-
-// Build Huffman codes
-void buildCodes(Node* root, std::string str, std::unordered_map<char, std::string> &huffmanCode) {
-    if (!root) return;
-    if (!root->left && !root->right)
-        huffmanCode[root->ch] = str;
-
-    buildCodes(root->left, str + "0", huffmanCode);
-    buildCodes(root->right, str + "1", huffmanCode);
+Huffman::Huffman() : compressionRatio(0.0), executionTime(0), huffmanTree(nullptr) {
 }
 
-// Compress file
-bool Huffman::compressFile(const std::string& inputFile, const std::string& outputFile) {
-    std::ifstream in(inputFile, std::ios::binary);
-    if (!in.is_open()) return false;
-
-    std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
-    in.close();
-
-    std::unordered_map<char, int> freq;
-    for (char ch : text) freq[ch]++;
-
-    std::priority_queue<Node*, std::vector<Node*>, Compare> pq;
-    for (auto pair : freq) pq.push(new Node(pair.first, pair.second));
-
-    while (pq.size() != 1) {
-        Node *left = pq.top(); pq.pop();
-        Node *right = pq.top(); pq.pop();
-        Node *sum = new Node('\0', left->freq + right->freq);
-        sum->left = left;
-        sum->right = right;
-        pq.push(sum);
+Huffman::~Huffman() {
+    if (huffmanTree) {
+        clearTree(huffmanTree);
     }
+}
 
-    Node* root = pq.top();
-
-    std::unordered_map<char, std::string> huffmanCode;
-    buildCodes(root, "", huffmanCode);
-
-    std::string encodedStr;
-    for (char ch : text) encodedStr += huffmanCode[ch];
-
-    std::ofstream out(outputFile, std::ios::binary);
-    if (!out.is_open()) return false;
-
-    // Write frequency table first
-    size_t tableSize = freq.size();
-    out.write(reinterpret_cast<char*>(&tableSize), sizeof(tableSize));
-    for (auto pair : freq) {
-        out.write(&pair.first, sizeof(char));
-        out.write(reinterpret_cast<char*>(&pair.second), sizeof(int));
+bool Huffman::compress(const QString& inputFile, const QString& outputFile) {
+    QElapsedTimer timer;
+    timer.start();
+    
+    lastError.clear();
+    frequencyTable.clear();
+    huffmanCodes.clear();
+    reverseCodes.clear();
+    
+    // Read input file
+    QFile input(inputFile);
+    if (!input.open(QIODevice::ReadOnly)) {
+        lastError = "Cannot open input file: " + inputFile;
+        return false;
     }
-
-    // Write encoded string as bytes
-    while (encodedStr.size() % 8 != 0) encodedStr += '0'; // pad with 0
-    for (size_t i = 0; i < encodedStr.size(); i += 8) {
-        std::bitset<8> b(encodedStr.substr(i, 8));
-        char c = static_cast<char>(b.to_ulong());
-        out.write(&c, 1);
+    
+    QByteArray data = input.readAll();
+    input.close();
+    
+    if (data.isEmpty()) {
+        lastError = "Input file is empty";
+        return false;
     }
-
-    out.close();
+    
+    qint64 originalSize = data.size();
+    
+    // Build frequency table
+    buildFrequencyTable(data);
+    
+    // Build Huffman tree
+    huffmanTree = buildHuffmanTree();
+    if (!huffmanTree) {
+        lastError = "Failed to build Huffman tree";
+        return false;
+    }
+    
+    // Generate codes
+    generateCodes(huffmanTree, "");
+    
+    // Encode data
+    QByteArray encodedData = encodeData(data);
+    
+    // Write to output file
+    QFile output(outputFile);
+    if (!output.open(QIODevice::WriteOnly)) {
+        lastError = "Cannot create output file: " + outputFile;
+        return false;
+    }
+    
+    QDataStream out(&output);
+    
+    // Write header: "HUFFMAN" magic number
+    out.writeRawData("HUFFMAN", 7);
+    
+    // Write frequency table size
+    quint32 tableSize = frequencyTable.size();
+    out << tableSize;
+    
+    // Write frequency table
+    for (auto it = frequencyTable.begin(); it != frequencyTable.end(); ++it) {
+        out << it.key() << it.value();
+    }
+    
+    // Write encoded data size
+    quint32 encodedSize = encodedData.size();
+    out << encodedSize;
+    
+    // Write encoded data
+    out.writeRawData(encodedData.constData(), encodedData.size());
+    
+    output.close();
+    
+    // Calculate compression ratio
+    qint64 compressedSize = Utility::getFileSize(outputFile);
+    compressionRatio = Utility::calculateCompressionRatio(originalSize, compressedSize);
+    executionTime = timer.elapsed();
+    
+    // Clean up
+    clearTree(huffmanTree);
+    huffmanTree = nullptr;
+    
     return true;
 }
 
-// Decompress file
-bool Huffman::decompressFile(const std::string& inputFile, const std::string& outputFile) {
-    std::ifstream in(inputFile, std::ios::binary);
-    if (!in.is_open()) return false;
-
-    size_t tableSize;
-    in.read(reinterpret_cast<char*>(&tableSize), sizeof(tableSize));
-    std::unordered_map<char, int> freq;
-    for (size_t i = 0; i < tableSize; i++) {
+bool Huffman::decompress(const QString& inputFile, const QString& outputFile) {
+    QElapsedTimer timer;
+    timer.start();
+    
+    lastError.clear();
+    frequencyTable.clear();
+    huffmanCodes.clear();
+    reverseCodes.clear();
+    
+    // Read input file
+    QFile input(inputFile);
+    if (!input.open(QIODevice::ReadOnly)) {
+        lastError = "Cannot open input file: " + inputFile;
+        return false;
+    }
+    
+    QDataStream in(&input);
+    
+    // Check magic number
+    char magic[8] = {0};
+    in.readRawData(magic, 7);
+    if (strcmp(magic, "HUFFMAN") != 0) {
+        lastError = "Invalid Huffman compressed file";
+        input.close();
+        return false;
+    }
+    
+    // Read frequency table
+    quint32 tableSize;
+    in >> tableSize;
+    
+    for (quint32 i = 0; i < tableSize; ++i) {
         char ch;
-        int f;
-        in.read(&ch, sizeof(char));
-        in.read(reinterpret_cast<char*>(&f), sizeof(int));
-        freq[ch] = f;
+        unsigned freq;
+        in >> ch >> freq;
+        frequencyTable[ch] = freq;
     }
-
-    // Rebuild Huffman tree
-    std::priority_queue<Node*, std::vector<Node*>, Compare> pq;
-    for (auto pair : freq) pq.push(new Node(pair.first, pair.second));
-    while (pq.size() != 1) {
-        Node *left = pq.top(); pq.pop();
-        Node *right = pq.top(); pq.pop();
-        Node *sum = new Node('\0', left->freq + right->freq);
-        sum->left = left;
-        sum->right = right;
-        pq.push(sum);
+    
+    // Read encoded data size
+    quint32 encodedSize;
+    in >> encodedSize;
+    
+    // Read encoded data
+    QByteArray encodedData(encodedSize, 0);
+    in.readRawData(encodedData.data(), encodedSize);
+    input.close();
+    
+    // Build Huffman tree from frequency table
+    huffmanTree = buildHuffmanTree();
+    if (!huffmanTree) {
+        lastError = "Failed to rebuild Huffman tree";
+        return false;
     }
-    Node* root = pq.top();
-
-    // Read rest of file as bits
-    std::string bits;
-    char c;
-    while (in.get(c)) {
-        std::bitset<8> b(c);
-        bits += b.to_string();
+    
+    // Generate codes for decoding
+    generateCodes(huffmanTree, "");
+    
+    // Decode data
+    QByteArray decodedData = decodeData(encodedData);
+    
+    // Write decoded data to output file
+    QFile output(outputFile);
+    if (!output.open(QIODevice::WriteOnly)) {
+        lastError = "Cannot create output file: " + outputFile;
+        return false;
     }
-    in.close();
+    
+    output.write(decodedData);
+    output.close();
+    
+    // Calculate metrics
+    qint64 compressedSize = Utility::getFileSize(inputFile);
+    qint64 decompressedSize = decodedData.size();
+    compressionRatio = Utility::calculateCompressionRatio(decompressedSize, compressedSize);
+    executionTime = timer.elapsed();
+    
+    // Clean up
+    clearTree(huffmanTree);
+    huffmanTree = nullptr;
+    
+    return true;
+}
 
-    std::ofstream out(outputFile, std::ios::binary);
-    Node* curr = root;
-    for (char bit : bits) {
-        if (bit == '0') curr = curr->left;
-        else curr = curr->right;
+void Huffman::buildFrequencyTable(const QByteArray& data) {
+    for (char ch : data) {
+        frequencyTable[ch]++;
+    }
+}
 
-        if (!curr->left && !curr->right) {
-            out.put(curr->ch);
-            curr = root;
+HuffmanNode* Huffman::buildHuffmanTree() {
+    if (frequencyTable.isEmpty()) {
+        return nullptr;
+    }
+    
+    QVector<HuffmanNode*> nodes;
+    for (auto it = frequencyTable.begin(); it != frequencyTable.end(); ++it) {
+        nodes.append(new HuffmanNode(it.key(), it.value()));
+    }
+    
+    while (nodes.size() > 1) {
+        // Sort nodes by frequency (ascending)
+        std::sort(nodes.begin(), nodes.end(), [](HuffmanNode* a, HuffmanNode* b) {
+            return a->freq < b->freq;
+        });
+        
+        // Take two nodes with smallest frequency
+        HuffmanNode* left = nodes.takeAt(0);
+        HuffmanNode* right = nodes.takeAt(0);
+        
+        // Create new internal node
+        HuffmanNode* internal = new HuffmanNode('\0', left->freq + right->freq);
+        internal->left = left;
+        internal->right = right;
+        
+        nodes.append(internal);
+    }
+    
+    return nodes.isEmpty() ? nullptr : nodes.first();
+}
+
+void Huffman::generateCodes(HuffmanNode* root, const QString& code) {
+    if (!root) return;
+    
+    if (root->isLeaf()) {
+        huffmanCodes[root->data] = code;
+        reverseCodes[code] = root->data;
+    } else {
+        generateCodes(root->left, code + "0");
+        generateCodes(root->right, code + "1");
+    }
+}
+
+void Huffman::clearTree(HuffmanNode* root) {
+    if (!root) return;
+    
+    clearTree(root->left);
+    clearTree(root->right);
+    delete root;
+}
+
+QByteArray Huffman::encodeData(const QByteArray& data) {
+    QString bitString;
+    
+    // Convert each character to its Huffman code
+    for (char ch : data) {
+        bitString += huffmanCodes[ch];
+    }
+    
+    // Convert bit string to byte array
+    QByteArray encoded;
+    int bitPos = 0;
+    char currentByte = 0;
+    
+    for (QChar bit : bitString) {
+        if (bit == '1') {
+            currentByte |= (1 << (7 - bitPos));
+        }
+        
+        bitPos++;
+        if (bitPos == 8) {
+            encoded.append(currentByte);
+            currentByte = 0;
+            bitPos = 0;
         }
     }
-    out.close();
-    return true;
+    
+    // Add remaining bits
+    if (bitPos > 0) {
+        encoded.append(currentByte);
+    }
+    
+    return encoded;
+}
+
+QByteArray Huffman::decodeData(const QByteArray& encodedData) {
+    // Convert byte array to bit string
+    QString bitString;
+    for (uchar byte : encodedData) {
+        for (int i = 7; i >= 0; --i) {
+            bitString.append((byte & (1 << i)) ? '1' : '0');
+        }
+    }
+    
+    // Decode using Huffman tree
+    QByteArray decoded;
+    HuffmanNode* current = huffmanTree;
+    
+    for (QChar bit : bitString) {
+        if (bit == '0') {
+            current = current->left;
+        } else {
+            current = current->right;
+        }
+        
+        if (current->isLeaf()) {
+            decoded.append(current->data);
+            current = huffmanTree;
+        }
+    }
+    
+    return decoded;
 }
